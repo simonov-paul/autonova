@@ -1,0 +1,5 @@
+.business/
+website/
+.DS_Store
+node_modules/
+.claude/skills/bulletproof/

@@ -1,0 +1,186 @@
+{
+  "name": "Tilda CRM → Оценка заявки → Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tilda-crm-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook — Новая заявка",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\n\n// Поля из формы Tilda (реальные имена полей)\nconst email = (data.Email || data.EMAIL || data.email || '').trim();\nconst name = (data.Name || data.NAME || data.name || '').trim();\nconst phone = (data.Phone || data.PHONE || data.phone || '').trim();\nconst delivery = (data['Доставка_самовывоз'] || data['ДОСТАВКА__САМОВЫВОЗ'] || '').trim();\nconst deliveryDate = (data['Дата_доставки_самовывоза'] || data['ДАТА_ДОСТАВКИ__САМОВЫВОЗА'] || '').trim();\nconst deliveryTime = (data['Время_доставки_самовывоза'] || data['ВРЕМЯ_ДОСТАВКИ__САМОВЫВОЗА'] || '').trim();\nconst name2 = (data.Name_2 || data.NAME_2 || '').trim();\nconst phone2 = (data.Phone_2 || data.PHONE_2 || '').trim();\n\n// Данные заказа (Tilda передаёт через payment[...])\nconst orderNum = data['payment[orderid]'] || '—';\nconst orderName = data['payment[products][0][name]'] || 'не указан';\nconst orderSum = data['payment[amount]'] || data['payment[subtotal]'] || '0';\nconst paymentType = data.paymentsystem || data['payment[system]'] || 'не указан';\nconst paymentStatus = 'Ожидает оплаты';\n\n// Оценка заполненности\nconst missing = [];\nif (!email) missing.push('Email');\nif (!name) missing.push('Имя клиента');\nif (!phone) missing.push('Телефон клиента');\nif (!delivery) missing.push('Адрес/способ доставки');\nif (!deliveryDate) missing.push('Дата доставки');\nif (!deliveryTime) missing.push('Время доставки');\n\nlet status;\nif (missing.length >= 3) {\n  status = 'critical';\n} else if (missing.length > 0) {\n  status = 'partial';\n} else {\n  status = 'full';\n}\n\nconst score = Math.round(((6 - missing.length) / 6) * 100);\n\nreturn [{\n  json: {\n    status,\n    score,\n    missing,\n    fields: { email, name, phone, delivery, deliveryDate, deliveryTime, name2, phone2 },\n    order: { orderNum, orderName, orderSum, paymentStatus, paymentType }\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Оценка заявки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "full",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "full"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "partial",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "partial"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "critical",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "critical"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Switch — статус заявки",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "50052430",
+        "text": "=✅ *Новая заявка — всё заполнено*\n\n👤 *Клиент:* {{ $json.fields.name }}\n📞 *Телефон:* {{ $json.fields.phone }}\n📧 *Email:* {{ $json.fields.email }}\n\n📦 *Заказ №{{ $json.order.orderNum }}*\n🛍 Товар: {{ $json.order.orderName }}\n💰 Сумма: {{ $json.order.orderSum }} RUB\n💳 Оплата: {{ $json.order.paymentStatus }} ({{ $json.order.paymentType }})\n\n🚗 *Доставка:* {{ $json.fields.delivery }}\n📅 Дата: {{ $json.fields.deliveryDate }}\n⏰ Время: {{ $json.fields.deliveryTime }}\n\n{{ $json.fields.name2 ? '👥 Получатель: ' + $json.fields.name2 + ' ' + $json.fields.phone2 : '' }}\n\n📊 Заполненность: {{ $json.score }}%",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "4",
+      "name": "Telegram — Полная заявка",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [960, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "50052430",
+        "text": "=⚠️ *Неполная заявка — требует внимания*\n\n👤 *Клиент:* {{ $json.fields.name || 'не указан' }}\n📞 *Телефон:* {{ $json.fields.phone || 'не указан' }}\n📧 *Email:* {{ $json.fields.email || 'не указан' }}\n\n📦 *Заказ №{{ $json.order.orderNum }}*\n💰 Сумма: {{ $json.order.orderSum }} RUB\n\n❌ *Не заполнено:*\n{{ $json.missing.join('\\n') }}\n\n📊 Заполненность: {{ $json.score }}%\n\n👉 Свяжитесь с клиентом для уточнения данных",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "5",
+      "name": "Telegram — Неполная заявка",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [960, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "50052430",
+        "text": "=🚨 *Критическая заявка — данных почти нет*\n\n📦 *Заказ №{{ $json.order.orderNum }}*\n💰 Сумма: {{ $json.order.orderSum }} RUB\n\n❌ *Не заполнено:*\n{{ $json.missing.join('\\n') }}\n\n📊 Заполненность: {{ $json.score }}%\n\n👉 Срочно проверьте заявку в Tilda CRM",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "6",
+      "name": "Telegram — Критическая заявка",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [960, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {}
+      },
+      "id": "7",
+      "name": "Response — 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Webhook — Новая заявка": {
+      "main": [[{ "node": "Оценка заявки", "type": "main", "index": 0 }]]
+    },
+    "Оценка заявки": {
+      "main": [[{ "node": "Switch — статус заявки", "type": "main", "index": 0 }]]
+    },
+    "Switch — статус заявки": {
+      "main": [
+        [{ "node": "Telegram — Полная заявка", "type": "main", "index": 0 }],
+        [{ "node": "Telegram — Неполная заявка", "type": "main", "index": 0 }],
+        [{ "node": "Telegram — Критическая заявка", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram — Полная заявка": {
+      "main": [[{ "node": "Response — 200 OK", "type": "main", "index": 0 }]]
+    },
+    "Telegram — Неполная заявка": {
+      "main": [[{ "node": "Response — 200 OK", "type": "main", "index": 0 }]]
+    },
+    "Telegram — Критическая заявка": {
+      "main": [[{ "node": "Response — 200 OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,831 @@
+{
+  "name": "Pestro — Order Bot v2 (Кнопки)",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "pestro-bot-v2",
+      "parameters": {
+        "updates": ["message", "callback_query"]
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400],
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\nconst msg = body.message;\nconst cbq = body.callback_query;\n\nlet chatId = '', text = '', isVoice = false, isCallback = false, callbackData = '', callbackQueryId = '', fileId = '';\n\nif (cbq) {\n  isCallback = true;\n  chatId = String(cbq.from.id);\n  callbackData = cbq.data || '';\n  callbackQueryId = String(cbq.id);\n} else if (msg) {\n  chatId = String(msg.chat.id);\n  if (msg.voice) {\n    isVoice = true;\n    fileId = msg.voice.file_id;\n  } else {\n    text = msg.text || '';\n  }\n}\n\nreturn [{ json: { chatId, text, isVoice, isCallback, callbackData, callbackQueryId, fileId } }];"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Switch — Input Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 400],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.isCallback }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "callback"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.isVoice }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "voice"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.isCallback }}", "rightValue": false, "operator": { "type": "boolean", "operation": "false" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "text"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "n4",
+      "name": "Answer Callback Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot8752051329:AAEAtsm5tYlOwo7hqP2J6Dzr-jhds-nrqsc/answerCallbackQuery",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "callback_query_id", "value": "={{ $('Parse Input').first().json.callbackQueryId }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Read Sessions CB",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1120, 160],
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Process Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 160],
+      "parameters": {
+        "jsCode": "const parsed = $('Parse Input').first().json;\nconst chatId = parsed.chatId;\nconst callbackData = parsed.callbackData;\n\nconst sessionRows = $input.all().map(r => r.json);\nconst session = sessionRows.find(r => String(r.chat_id) === chatId) || {};\n\nlet selectedProduct = '';\nif (callbackData.startsWith('order:')) {\n  selectedProduct = callbackData.replace('order:', '');\n}\n\nreturn [{ json: {\n  chat_id: chatId,\n  step: 'ordering',\n  flowers: session.flowers || '',\n  budget: session.budget || '',\n  selected_product: selectedProduct\n} }];"
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Upsert Session CB",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1560, 160],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chat_id }}",
+            "step": "={{ $json.step }}",
+            "flowers": "={{ $json.flowers }}",
+            "budget": "={{ $json.budget }}",
+            "selected_product": "={{ $json.selected_product }}"
+          },
+          "matchingColumns": ["chat_id"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "step", "displayName": "step", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "flowers", "displayName": "flowers", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "budget", "displayName": "budget", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "selected_product", "displayName": "selected_product", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Send Ordering Intro",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 160],
+      "parameters": {
+        "chatId": "={{ $('Process Callback').first().json.chat_id }}",
+        "text": "=Отличный выбор! 🌸\n\nВы выбрали *{{ $('Process Callback').first().json.selected_product }}*.\n\nДавайте оформим доставку. Как вас зовут?",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+
+    {
+      "id": "n9",
+      "name": "Get Voice File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 400],
+      "parameters": {
+        "operation": "getFile",
+        "fileId": "={{ $('Parse Input').first().json.fileId }}"
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Download Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/file/bot8752051329:AAEAtsm5tYlOwo7hqP2J6Dzr-jhds-nrqsc/{{ $json.result.file_path }}",
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Groq Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer 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" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "file", "value": "={{ $binary.data }}", "parameterType": "formBinaryData" },
+            { "name": "model", "value": "whisper-large-v3-turbo" },
+            { "name": "language", "value": "ru" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Extract Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400],
+      "parameters": {
+        "jsCode": "const transcription = $input.first().json.text || '';\nconst chatId = $('Parse Input').first().json.chatId;\nreturn [{ json: { chatId, text: transcription } }];"
+      }
+    },
+
+    {
+      "id": "n13",
+      "name": "Read Sessions",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1780, 400],
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Find Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 400],
+      "parameters": {
+        "jsCode": "let chatId = '', text = '';\ntry {\n  const et = $('Extract Transcription').first().json;\n  chatId = et.chatId; text = et.text || '';\n} catch(e) {}\nif (!chatId) {\n  try {\n    const pi = $('Parse Input').first().json;\n    chatId = pi.chatId; text = pi.text || '';\n  } catch(e) {}\n}\n\nconst allSessions = $input.all().map(r => r.json);\nconst session = allSessions.find(r => String(r.chat_id) === chatId);\nconst step = (text === '/start' || !session) ? 'start' : (session.step || 'start');\n\nreturn [{ json: {\n  chatId,\n  text,\n  step,\n  flowers: session ? (session.flowers || '') : '',\n  budget: session ? (session.budget || '') : '',\n  selected_product: session ? (session.selected_product || '') : ''\n} }];"
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Switch — Step",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2220, 400],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.step }}", "rightValue": "start", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.step }}", "rightValue": "flowers", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "flowers"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.step }}", "rightValue": "budget", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "budget"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.step }}", "rightValue": "shown", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "shown"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.step }}", "rightValue": "ordering", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ordering"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra-output-0" }
+      }
+    },
+
+    {
+      "id": "n16",
+      "name": "Upsert Session Start",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2440, 160],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chatId }}",
+            "step": "flowers",
+            "flowers": "",
+            "budget": "",
+            "selected_product": ""
+          },
+          "matchingColumns": ["chat_id"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "step", "displayName": "step", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "flowers", "displayName": "flowers", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "budget", "displayName": "budget", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "selected_product", "displayName": "selected_product", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Send Flower Keyboard",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2660, 160],
+      "parameters": {
+        "chatId": "={{ $('Find Session').first().json.chatId }}",
+        "text": "Привет! 🌸 Добро пожаловать в Pestro.\n\nПодберём красивый букет. Какие цветы предпочитаете?",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "reply_markup": "{\"keyboard\":[[{\"text\":\"🌹 Розы\"},{\"text\":\"🌸 Пионы\"}],[{\"text\":\"🌷 Тюльпаны\"},{\"text\":\"💐 Без разницы\"}]],\"one_time_keyboard\":true,\"resize_keyboard\":true}"
+        }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+
+    {
+      "id": "n18",
+      "name": "Save Flowers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 340],
+      "parameters": {
+        "jsCode": "const chatId = $json.chatId;\nconst t = ($json.text || '').toLowerCase();\nlet flowers = 'any';\nif (t.includes('роз')) flowers = 'роза';\nelse if (t.includes('пион')) flowers = 'пион';\nelse if (t.includes('тюльп')) flowers = 'тюльпан';\nreturn [{ json: { chatId, flowers } }];"
+      }
+    },
+    {
+      "id": "n19",
+      "name": "Upsert Session Flowers",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2660, 340],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chatId }}",
+            "step": "budget",
+            "flowers": "={{ $json.flowers }}"
+          },
+          "matchingColumns": ["chat_id"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "step", "displayName": "step", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "flowers", "displayName": "flowers", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n20",
+      "name": "Send Budget Keyboard",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2880, 340],
+      "parameters": {
+        "chatId": "={{ $('Save Flowers').first().json.chatId }}",
+        "text": "Отлично! 💰 Какой у вас бюджет?",
+        "additionalFields": {
+          "reply_markup": "{\"keyboard\":[[{\"text\":\"до 10 000 ₽\"},{\"text\":\"до 15 000 ₽\"}],[{\"text\":\"Без ограничений\"}]],\"one_time_keyboard\":true,\"resize_keyboard\":true}"
+        }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+
+    {
+      "id": "n21",
+      "name": "Save Budget",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 520],
+      "parameters": {
+        "jsCode": "const chatId = $json.chatId;\nconst flowers = $json.flowers || 'any';\nconst t = $json.text || '';\nlet budget = 0;\nif (t.includes('10')) budget = 10000;\nelse if (t.includes('15')) budget = 15000;\nreturn [{ json: { chatId, flowers, budget } }];"
+      }
+    },
+    {
+      "id": "n22",
+      "name": "Upsert Session Budget",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2660, 520],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chatId }}",
+            "step": "shown",
+            "budget": "={{ $json.budget }}"
+          },
+          "matchingColumns": ["chat_id"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "step", "displayName": "step", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "budget", "displayName": "budget", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n23",
+      "name": "Read Catalog",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2880, 520],
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "gid=1848969580", "__rl": true, "mode": "id" },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n24",
+      "name": "Filter Catalog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 520],
+      "parameters": {
+        "jsCode": "const saved = $('Save Budget').first().json;\nconst chatId = saved.chatId;\nconst flowers = (saved.flowers || 'any').toLowerCase();\nconst budget = parseInt(saved.budget) || 0;\n\nconst allRows = $input.all().map(r => r.json);\n\nconst filtered = allRows.filter(item => {\n  const price = parseInt(String(item.price || item.Price || 0).replace(/[\\s\\u00a0]/g, '')) || 0;\n  if (budget > 0 && price > budget) return false;\n  if (flowers && flowers !== 'any') {\n    const comp = (item.composition || item.Composition || '').toLowerCase();\n    if (!comp.includes(flowers)) return false;\n  }\n  return true;\n});\n\nconst result = filtered.length > 0 ? filtered.slice(0, 6) : allRows.slice(0, 6);\n\nreturn result.map(item => ({\n  json: {\n    chatId,\n    name: item.name || item.Name || '',\n    price: item.price || item.Price || '',\n    composition: item.composition || item.Composition || '',\n    photo: item.photo || item.Photo || '',\n    callbackData: 'order:' + (item.name || item.Name || '')\n  }\n}));"
+      }
+    },
+    {
+      "id": "n25",
+      "name": "Send Bouquets",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3320, 520],
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $json.chatId }}",
+        "photo": "={{ $json.photo }}",
+        "additionalFields": {
+          "caption": "=*{{ $json.name }}* — {{ $json.price }} ₽\n\n🌸 {{ $json.composition }}",
+          "parse_mode": "Markdown",
+          "reply_markup": "={{ JSON.stringify({ inline_keyboard: [[{ text: '🛒 Заказать этот букет', callback_data: $json.callbackData }]] }) }}"
+        }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+
+    {
+      "id": "n26",
+      "name": "Prompt Click Button",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2440, 700],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Нажмите кнопку *«Заказать этот букет»* под одним из букетов 👆",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+
+    {
+      "id": "n27",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [2440, 900],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Find Session').first().json.text }}",
+        "systemMessage": "=Ты — вежливый помощник цветочного магазина Pestro. Клиент уже выбрал букет: {{ $('Find Session').first().json.selected_product }}.\n\nТвоя задача — последовательно собрать данные для доставки:\n1. Имя клиента\n2. Номер телефона\n3. Адрес доставки\n4. Желаемое время доставки\n\nЗадавай по одному вопросу за раз. Будь дружелюбным и кратким. Не повторяй уже полученную информацию.\n\nКогда все 4 пункта получены, выведи СТРОГО в этом формате без лишнего текста:\n##ЗАКАЗ## имя: {имя}, телефон: {телефон}, адрес: {адрес}, время: {время}, букет: {{ $('Find Session').first().json.selected_product }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "n28",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [2320, 1060],
+      "parameters": {
+        "model": "claude-haiku-4-5-20251001",
+        "options": {}
+      },
+      "credentials": {
+        "anthropicApi": { "id": "ANTHROPIC_CRED_ID", "name": "Anthropic account" }
+      }
+    },
+    {
+      "id": "n29",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [2560, 1060],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Find Session').first().json.chatId }}",
+        "contextWindowLength": 10
+      }
+    },
+    {
+      "id": "n30",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 900],
+      "parameters": {
+        "jsCode": "const output = $input.first().json.output || '';\nconst chatId = $('Find Session').first().json.chatId;\n\nif (!output.includes('##ЗАКАЗ##')) {\n  return [{ json: { isOrder: false, chatId, reply: output } }];\n}\n\nconst orderPart = output.split('##ЗАКАЗ##')[1] || '';\nconst extract = (key) => {\n  const m = orderPart.match(new RegExp(key + ':\\\\s*([^,\\\\n]+)'));\n  return m ? m[1].trim() : '';\n};\n\nreturn [{ json: {\n  isOrder: true,\n  chatId,\n  reply: '✅ Заказ принят! Менеджер свяжется с вами в ближайшее время.',\n  name: extract('имя'),\n  phone: extract('телефон'),\n  address: extract('адрес'),\n  time: extract('время'),\n  product: extract('букет')\n} }];"
+      }
+    },
+    {
+      "id": "n31",
+      "name": "Switch — Order?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2880, 900],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.isOrder }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "order"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.isOrder }}", "rightValue": false, "operator": { "type": "boolean", "operation": "false" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "chat"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n32",
+      "name": "Save Order to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [3100, 820],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Orders", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chatId }}",
+            "name": "={{ $json.name }}",
+            "phone": "={{ $json.phone }}",
+            "address": "={{ $json.address }}",
+            "time": "={{ $json.time }}",
+            "product": "={{ $json.product }}",
+            "status": "new",
+            "created_at": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "name", "displayName": "name", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "phone", "displayName": "phone", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "address", "displayName": "address", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "time", "displayName": "time", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "product", "displayName": "product", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "created_at", "displayName": "created_at", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n33",
+      "name": "Notify Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3320, 820],
+      "parameters": {
+        "chatId": "50052430",
+        "text": "=🆕 *Новый заказ через бота!*\n\n👤 Имя: {{ $json.name }}\n📞 Телефон: {{ $json.phone }}\n📍 Адрес: {{ $json.address }}\n🕐 Время: {{ $json.time }}\n💐 Букет: {{ $json.product }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+    {
+      "id": "n34",
+      "name": "Reply Order Confirm",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3540, 820],
+      "parameters": {
+        "chatId": "={{ $('Parse AI Output').first().json.chatId }}",
+        "text": "={{ $('Parse AI Output').first().json.reply }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    },
+    {
+      "id": "n35",
+      "name": "Reset Session",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [3760, 820],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Sessions", "__rl": true, "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $('Parse AI Output').first().json.chatId }}",
+            "step": "start",
+            "flowers": "",
+            "budget": "",
+            "selected_product": ""
+          },
+          "matchingColumns": ["chat_id"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "step", "displayName": "step", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "flowers", "displayName": "flowers", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "budget", "displayName": "budget", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false },
+            { "id": "selected_product", "displayName": "selected_product", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n36",
+      "name": "Reply to Client",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3100, 980],
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.reply }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Pestro Bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[{ "node": "Parse Input", "type": "main", "index": 0 }]]
+    },
+    "Parse Input": {
+      "main": [[{ "node": "Switch — Input Type", "type": "main", "index": 0 }]]
+    },
+    "Switch — Input Type": {
+      "main": [
+        [{ "node": "Answer Callback Query", "type": "main", "index": 0 }],
+        [{ "node": "Get Voice File", "type": "main", "index": 0 }],
+        [{ "node": "Read Sessions", "type": "main", "index": 0 }]
+      ]
+    },
+
+    "Answer Callback Query": {
+      "main": [[{ "node": "Read Sessions CB", "type": "main", "index": 0 }]]
+    },
+    "Read Sessions CB": {
+      "main": [[{ "node": "Process Callback", "type": "main", "index": 0 }]]
+    },
+    "Process Callback": {
+      "main": [[{ "node": "Upsert Session CB", "type": "main", "index": 0 }]]
+    },
+    "Upsert Session CB": {
+      "main": [[{ "node": "Send Ordering Intro", "type": "main", "index": 0 }]]
+    },
+
+    "Get Voice File": {
+      "main": [[{ "node": "Download Voice", "type": "main", "index": 0 }]]
+    },
+    "Download Voice": {
+      "main": [[{ "node": "Groq Transcribe", "type": "main", "index": 0 }]]
+    },
+    "Groq Transcribe": {
+      "main": [[{ "node": "Extract Transcription", "type": "main", "index": 0 }]]
+    },
+    "Extract Transcription": {
+      "main": [[{ "node": "Read Sessions", "type": "main", "index": 0 }]]
+    },
+
+    "Read Sessions": {
+      "main": [[{ "node": "Find Session", "type": "main", "index": 0 }]]
+    },
+    "Find Session": {
+      "main": [[{ "node": "Switch — Step", "type": "main", "index": 0 }]]
+    },
+    "Switch — Step": {
+      "main": [
+        [{ "node": "Upsert Session Start", "type": "main", "index": 0 }],
+        [{ "node": "Save Flowers", "type": "main", "index": 0 }],
+        [{ "node": "Save Budget", "type": "main", "index": 0 }],
+        [{ "node": "Prompt Click Button", "type": "main", "index": 0 }],
+        [{ "node": "AI Agent", "type": "main", "index": 0 }]
+      ]
+    },
+
+    "Upsert Session Start": {
+      "main": [[{ "node": "Send Flower Keyboard", "type": "main", "index": 0 }]]
+    },
+
+    "Save Flowers": {
+      "main": [[{ "node": "Upsert Session Flowers", "type": "main", "index": 0 }]]
+    },
+    "Upsert Session Flowers": {
+      "main": [[{ "node": "Send Budget Keyboard", "type": "main", "index": 0 }]]
+    },
+
+    "Save Budget": {
+      "main": [[{ "node": "Upsert Session Budget", "type": "main", "index": 0 }]]
+    },
+    "Upsert Session Budget": {
+      "main": [[{ "node": "Read Catalog", "type": "main", "index": 0 }]]
+    },
+    "Read Catalog": {
+      "main": [[{ "node": "Filter Catalog", "type": "main", "index": 0 }]]
+    },
+    "Filter Catalog": {
+      "main": [[{ "node": "Send Bouquets", "type": "main", "index": 0 }]]
+    },
+
+    "AI Agent": {
+      "main": [[{ "node": "Parse AI Output", "type": "main", "index": 0 }]]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "Parse AI Output": {
+      "main": [[{ "node": "Switch — Order?", "type": "main", "index": 0 }]]
+    },
+    "Switch — Order?": {
+      "main": [
+        [{ "node": "Save Order to Sheets", "type": "main", "index": 0 }],
+        [{ "node": "Reply to Client", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Order to Sheets": {
+      "main": [[{ "node": "Notify Manager", "type": "main", "index": 0 }]]
+    },
+    "Notify Manager": {
+      "main": [[{ "node": "Reply Order Confirm", "type": "main", "index": 0 }]]
+    },
+    "Reply Order Confirm": {
+      "main": [[{ "node": "Reset Session", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

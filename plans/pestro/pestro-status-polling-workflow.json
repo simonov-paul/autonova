@@ -1,0 +1,229 @@
+{
+  "name": "Pestro — Polling статусов Posiflora → Telegram клиенту",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 10 }]
+        }
+      },
+      "id": "1",
+      "name": "Schedule — каждые 10 минут",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.posiflora.com/api/v1/sessions",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "login", "value": "POSIFLORA_LOGIN" },
+            { "name": "password", "value": "POSIFLORA_PASSWORD" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2",
+      "name": "Posiflora — Авторизация",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "Замени POSIFLORA_LOGIN и POSIFLORA_PASSWORD. Ответ содержит token."
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n// Posiflora возвращает токен — уточни структуру по документации\nconst token = response.token || response.data?.token || response.access_token;\nif (!token) throw new Error('Не удалось получить токен Posiflora: ' + JSON.stringify(response));\nreturn [{ json: { token } }];"
+      },
+      "id": "3",
+      "name": "Извлечь токен",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.posiflora.com/api/v1/orders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4",
+      "name": "Posiflora — GET /orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "notes": "Уточни URL и структуру ответа по документации posiflora.stoplight.io"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "gid=0", "__rl": true, "mode": "id" },
+        "options": {}
+      },
+      "id": "5",
+      "name": "Читать Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1120, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем заказы из Posiflora\nconst posifloraResponse = $('Posiflora — GET /orders').first().json;\n// Уточни структуру: возможно posifloraResponse.data или posifloraResponse.orders\nconst orders = posifloraResponse.data || posifloraResponse.orders || posifloraResponse;\nconst ordersArray = Array.isArray(orders) ? orders : [];\n\n// Получаем строки из Google Sheets\nconst sheetRows = $input.all().map(r => r.json);\n\n// Находим изменения статуса\nconst changes = [];\n\nfor (const order of ordersArray) {\n  // Уточни поля по документации Posiflora:\n  // order.id или order.orderid — идентификатор заказа\n  // order.status — текущий статус\n  const orderId = String(order.id || order.orderid || '');\n  const newStatus = String(order.status || order.state || '');\n  \n  if (!orderId || !newStatus) continue;\n  \n  // Ищем этот заказ в Sheets\n  const sheetRow = sheetRows.find(r => String(r.orderid || '') === orderId);\n  if (!sheetRow) continue;\n  \n  // Есть chat_id — клиент зарегистрирован в боте?\n  const chatId = sheetRow.chat_id;\n  if (!chatId) continue;\n  \n  // Статус изменился?\n  const oldStatus = sheetRow.status || '';\n  if (newStatus === oldStatus) continue;\n  \n  changes.push({\n    orderId,\n    chatId,\n    oldStatus,\n    newStatus,\n    clientName: sheetRow.Name || '',\n    phone: sheetRow.Phone || ''\n  });\n}\n\nif (changes.length === 0) {\n  return [{ json: { hasChanges: false } }];\n}\n\n// Возвращаем каждое изменение отдельным item\nreturn changes.map(c => ({ json: { hasChanges: true, ...c } }));"
+      },
+      "id": "6",
+      "name": "Найти изменения статусов",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasChanges }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "changed"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasChanges }}",
+                    "rightValue": false,
+                    "operator": { "type": "boolean", "operation": "false" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "no_changes"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7",
+      "name": "Switch — есть изменения?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Человекочитаемые названия статусов Posiflora\n// Уточни реальные статусы из документации и адаптируй\nconst statusLabels = {\n  'new': '🆕 Новый',\n  'confirmed': '✅ Подтверждён',\n  'in_work': '🌸 В работе (собираем букет)',\n  'ready': '📦 Готов к выдаче',\n  'delivery': '🚗 Передан в доставку',\n  'delivered': '✅ Доставлен',\n  'cancelled': '❌ Отменён',\n  'completed': '🎉 Выполнен'\n};\n\nconst item = $input.first().json;\nconst label = statusLabels[item.newStatus] || item.newStatus;\n\nreturn [{ json: { ...item, statusLabel: label } }];"
+      },
+      "id": "8",
+      "name": "Форматировать статус",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 160]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "gid=0", "__rl": true, "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.newStatus }}"
+          },
+          "matchingColumns": ["orderid"],
+          "schema": [
+            { "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": false }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Обновить статус в Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2000, 160],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Форматировать статус').first().json.chatId }}",
+        "text": "=🌸 *Pestro — обновление заказа*\n\nСтатус вашего заказа изменился:\n\n{{ $('Форматировать статус').first().json.statusLabel }}\n\nЕсли у вас есть вопросы — напишите нам.",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "10",
+      "name": "Telegram — уведомить клиента",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2220, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule — каждые 10 минут": {
+      "main": [[{ "node": "Posiflora — Авторизация", "type": "main", "index": 0 }]]
+    },
+    "Posiflora — Авторизация": {
+      "main": [[{ "node": "Извлечь токен", "type": "main", "index": 0 }]]
+    },
+    "Извлечь токен": {
+      "main": [[{ "node": "Posiflora — GET /orders", "type": "main", "index": 0 }]]
+    },
+    "Posiflora — GET /orders": {
+      "main": [[{ "node": "Читать Google Sheets", "type": "main", "index": 0 }]]
+    },
+    "Читать Google Sheets": {
+      "main": [[{ "node": "Найти изменения статусов", "type": "main", "index": 0 }]]
+    },
+    "Найти изменения статусов": {
+      "main": [[{ "node": "Switch — есть изменения?", "type": "main", "index": 0 }]]
+    },
+    "Switch — есть изменения?": {
+      "main": [
+        [{ "node": "Форматировать статус", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Форматировать статус": {
+      "main": [[{ "node": "Обновить статус в Sheets", "type": "main", "index": 0 }]]
+    },
+    "Обновить статус в Sheets": {
+      "main": [[{ "node": "Telegram — уведомить клиента", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

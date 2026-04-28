@@ -1,0 +1,306 @@
+{
+  "name": "Pestro Bot — Клиент регистрируется",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\n\nconst chatId = msg.message?.chat?.id || msg.message?.from?.id;\nconst text = (msg.message?.text || '').trim();\nconst firstName = msg.message?.from?.first_name || '';\n\n// Определяем: это /start или номер телефона?\nlet type = 'unknown';\nif (text === '/start') {\n  type = 'start';\n} else if (/^[\\+7\\d][\\d\\s\\(\\)\\-]{8,}$/.test(text)) {\n  // Похоже на номер телефона\n  const cleaned = text.replace(/[\\s\\(\\)\\-]/g, '');\n  type = 'phone';\n}\n\nreturn [{ json: { chatId, text, firstName, type } }];"
+      },
+      "id": "2",
+      "name": "Парсинг сообщения",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "start",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "phone",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "phone"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "unknown",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "unknown"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Switch — тип сообщения",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=Привет, {{ $json.firstName }}! 👋\n\nЯ бот цветочного магазина *Pestro*.\n\nЧтобы я мог присылать вам уведомления о статусе заказа — введите ваш номер телефона, который вы указали при оформлении.\n\nПример: *+7 900 123-45-67*",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "4",
+      "name": "Ответ на /start",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.text || '';\n// Нормализуем телефон: оставляем только цифры, добавляем +7\nlet phone = text.replace(/[\\s\\(\\)\\-]/g, '');\nif (phone.startsWith('8')) phone = '+7' + phone.slice(1);\nif (!phone.startsWith('+')) phone = '+' + phone;\n\nreturn [{ json: { ...$input.first().json, phoneNormalized: phone } }];"
+      },
+      "id": "5",
+      "name": "Нормализация телефона",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "gid=0", "__rl": true, "mode": "id" },
+        "options": {}
+      },
+      "id": "6",
+      "name": "Читать Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1120, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst phoneNormalized = $('Нормализация телефона').first().json.phoneNormalized;\nconst chatId = $('Нормализация телефона').first().json.chatId;\nconst firstName = $('Нормализация телефона').first().json.firstName;\n\n// Ищем строку с совпадающим телефоном\nlet foundRow = null;\nlet rowIndex = -1;\n\nfor (let i = 0; i < rows.length; i++) {\n  const rowPhone = (rows[i].json.Phone || '').replace(/[\\s\\(\\)\\-]/g, '');\n  let normalizedRow = rowPhone;\n  if (normalizedRow.startsWith('8')) normalizedRow = '+7' + normalizedRow.slice(1);\n  if (!normalizedRow.startsWith('+')) normalizedRow = '+' + normalizedRow;\n  \n  if (normalizedRow === phoneNormalized) {\n    foundRow = rows[i].json;\n    rowIndex = i + 2; // +2 потому что строки в Sheets начинаются с 1, плюс заголовок\n    break;\n  }\n}\n\nif (!foundRow) {\n  return [{ json: { found: false, chatId, firstName, phoneNormalized } }];\n}\n\nreturn [{ json: { found: true, chatId, firstName, phoneNormalized, rowIndex, orderid: foundRow.orderid, name: foundRow.Name, products: foundRow.products, price: foundRow.price } }];"
+      },
+      "id": "7",
+      "name": "Поиск клиента по телефону",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.found }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "found"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.found }}",
+                    "rightValue": false,
+                    "operator": { "type": "boolean", "operation": "false" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "not_found"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8",
+      "name": "Switch — найден?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "gid=0", "__rl": true, "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chat_id": "={{ $json.chatId }}"
+          },
+          "matchingColumns": ["Phone"],
+          "schema": [
+            { "id": "chat_id", "displayName": "chat_id", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Записать chat_id в Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1780, 160],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=✅ Отлично, {{ $json.name }}!\n\nВаш заказ найден:\n📦 {{ $json.products }}\n💰 Сумма: {{ $json.price }} RUB\n\nТеперь я буду присылать вам уведомления о статусе заказа прямо сюда.\n\nСпасибо, что выбрали *Pestro* 🌸",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "10",
+      "name": "Клиент найден — подтверждение",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2000, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=😕 Не нашёл заказ с номером *{{ $json.phoneNormalized }}*.\n\nПроверьте номер и попробуйте ещё раз — введите телефон, который указывали при заказе.\n\nЕсли проблема остаётся, свяжитесь с нами.",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "11",
+      "name": "Клиент не найден",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Не понял вас 😊\n\nПожалуйста, введите ваш номер телефона в формате: *+7 900 123-45-67*",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "12",
+      "name": "Непонятное сообщение",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[{ "node": "Парсинг сообщения", "type": "main", "index": 0 }]]
+    },
+    "Парсинг сообщения": {
+      "main": [[{ "node": "Switch — тип сообщения", "type": "main", "index": 0 }]]
+    },
+    "Switch — тип сообщения": {
+      "main": [
+        [{ "node": "Ответ на /start", "type": "main", "index": 0 }],
+        [{ "node": "Нормализация телефона", "type": "main", "index": 0 }],
+        [{ "node": "Непонятное сообщение", "type": "main", "index": 0 }]
+      ]
+    },
+    "Нормализация телефона": {
+      "main": [[{ "node": "Читать Google Sheets", "type": "main", "index": 0 }]]
+    },
+    "Читать Google Sheets": {
+      "main": [[{ "node": "Поиск клиента по телефону", "type": "main", "index": 0 }]]
+    },
+    "Поиск клиента по телефону": {
+      "main": [[{ "node": "Switch — найден?", "type": "main", "index": 0 }]]
+    },
+    "Switch — найден?": {
+      "main": [
+        [{ "node": "Записать chat_id в Sheets", "type": "main", "index": 0 }],
+        [{ "node": "Клиент не найден", "type": "main", "index": 0 }]
+      ]
+    },
+    "Записать chat_id в Sheets": {
+      "main": [[{ "node": "Клиент найден — подтверждение", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

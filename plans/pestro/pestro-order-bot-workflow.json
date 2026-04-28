@@ -1,0 +1,397 @@
+{
+  "name": "Pestro — Бот оформления заказа",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\nconst chatId = msg.message?.chat?.id || msg.message?.from?.id;\nconst text = (msg.message?.text || '').trim();\nconst firstName = msg.message?.from?.first_name || 'друг';\nconst isVoice = !!msg.message?.voice;\nconst fileId = msg.message?.voice?.file_id || '';\nreturn [{ json: { chatId, text, firstName, isVoice, fileId } }];"
+      },
+      "id": "2",
+      "name": "Парсинг сообщения",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isVoice }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "voice"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isVoice }}",
+                    "rightValue": false,
+                    "operator": { "type": "boolean", "operation": "false" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2a",
+      "name": "Switch — голос или текст?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/bot8752051329:AAEAtsm5tYlOwo7hqP2J6Dzr-jhds-nrqsc/getFile?file_id={{ $json.fileId }}",
+        "options": {}
+      },
+      "id": "2b",
+      "name": "Telegram — получить ссылку на файл",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 160]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.telegram.org/file/bot8752051329:AAEAtsm5tYlOwo7hqP2J6Dzr-jhds-nrqsc/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "2c",
+      "name": "Скачать голосовой файл",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer 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" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "file", "value": "={{ $binary.data }}", "parameterType": "formBinaryData" },
+            { "name": "model", "value": "whisper-large-v3-turbo" },
+            { "name": "language", "value": "ru" },
+            { "name": "response_format", "value": "json" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2d",
+      "name": "Groq — транскрибация",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Объединяем транскрибированный текст с данными из парсинга\nconst transcribed = $input.first().json.text || '';\nconst parsed = $('Парсинг сообщения').first().json;\nreturn [{ json: { ...parsed, text: transcribed } }];"
+      },
+      "id": "2e",
+      "name": "Подставить транскрипцию",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 160]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "options": {
+          "systemMessage": "Ты помощник цветочного магазина Pestro. Помогаешь клиентам выбрать и заказать букет. Общайся тепло, по-русски, коротко и по делу.\n\nЛОГИКА ПОДБОРА — строго по порядку, по одному вопросу:\n\nШАГ 1: Спроси «Для кого букет?» Варианты: Любимой / Маме / Мужчине / Ребёнку / Коллеге / Другу\nШАГ 2: Спроси «Есть предпочтения по цветам? Например, розы, тюльпаны, пионы — или без разницы?»\nШАГ 3: Спроси «Какой бюджет? Или без ограничений?»\n\nПосле трёх ответов — вызови инструмент search_catalog, передав параметры:\n- recipient: ответ на вопрос 1 (на русском, строчными буквами)\n- flowers: ответ на вопрос 2 (ключевые слова через запятую, или пусто если без разницы)\n- budget: максимальная сумма числом (0 если без ограничений)\n\nИнструмент вернёт подходящие букеты — покажи их клиенту с названием, ценой, составом и ссылкой на фото.\nЕсли инструмент вернул 0 результатов — скажи что сейчас нет подходящих и предложи изменить параметры.\n\nСБОР ДАННЫХ ДЛЯ ЗАКАЗА (после выбора букета, по одному вопросу):\n1. Как вас зовут?\n2. Номер телефона?\n3. Доставка или самовывоз?\n4. Если доставка — адрес?\n5. Дата и время?\n\nПодтверди итог заказа и попроси клиента написать «Подтверждаю».\n\nПосле подтверждения добавь в конце сообщения служебную метку (клиент её не видит):\n##ЗАКАЗ##ИМЯ|ТЕЛЕФОН|БУКЕТ|ЦЕНА|ТИП_ДОСТАВКИ|АДРЕС|ДАТА|ВРЕМЯ##\n\nПример: ##ЗАКАЗ##Анна|+79001234567|Букет № 2|9181|Доставка|ул. Ленина 5 кв 12|25 апреля|14:00##\n\nЕсли клиент написал /start — ответь ТОЧНО этим текстом, ничего не меняй:\n\n👋 Добро пожаловать в цветочную лавку PESTRO\nЯ помогу выбрать идеальный букет.\n\n💐 Для кого ты хочешь букет?\nВозможные варианты: Любимой / Маме / Мужчине / Ребёнку / Коллеге / Другу"
+        }
+      },
+      "id": "3",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-haiku-4-5-20251001",
+        "options": {
+          "temperature": 0.7,
+          "maxTokensToSample": 1024
+        }
+      },
+      "id": "3a",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [580, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "ANTHROPIC_CRED_ID",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Парсинг сообщения').first().json.chatId }}",
+        "contextWindowLength": 20
+      },
+      "id": "3b",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [780, 520]
+    },
+    {
+      "parameters": {
+        "name": "search_catalog",
+        "description": "Поиск букетов в каталоге по параметрам клиента. Принимает JSON: {\"recipient\": \"маме\", \"flowers\": \"пион\", \"budget\": 12000}. budget=0 означает без ограничений. Возвращает список подходящих букетов.",
+        "jsCode": "// Каталог букетов (обновляй здесь при изменении товаров)\nconst catalog = [\n  {\n    name: 'Букет № 1',\n    price: 10900,\n    composition: 'гортензия, роза пионовидная, гиперикум, подсолнухи, хризантема кустовая',\n    recipient: 'любимой',\n    photo: 'https://static.tildacdn.com/stor6633-3839-4036-b337-386265376133/139406c440195411c7fbf501652ef9b1.jpg'\n  },\n  {\n    name: 'Букет № 2',\n    price: 9181,\n    composition: 'роза пионовидная, гиацинт, статица, хризантема кустовая, брассика, бовардия',\n    recipient: 'маме',\n    photo: 'https://static.tildacdn.com/stor6366-3038-4563-b034-356431346163/d4b8438312daa6a72b4853bb3ce26891.jpg'\n  },\n  {\n    name: 'Букет № 3',\n    price: 10340,\n    composition: 'роза пионовидная',\n    recipient: 'мужчине',\n    photo: 'https://static.tildacdn.com/stor3165-6137-4937-a635-393363343637/c7a682531d4e475456748a0745ead9e6.jpg'\n  },\n  {\n    name: 'Букет № 4',\n    price: 10980,\n    composition: 'гортензия, тюльпан, роза пионовидная, анемон, роза кустовая',\n    recipient: 'ребёнку',\n    photo: 'https://static.tildacdn.com/stor3937-3733-4631-b238-386633623735/2f46f0ba3b40f2a0a5114bfb1b9fb139.jpg'\n  },\n  {\n    name: 'Букет № 5',\n    price: 15580,\n    composition: 'тюльпан',\n    recipient: 'коллеге',\n    photo: 'https://static.tildacdn.com/stor3432-6332-4638-a466-653233656135/ba9cc9276f7bb071d3f1f5099c2b23e8.jpg'\n  },\n  {\n    name: 'Букет № 6',\n    price: 12290,\n    composition: 'роза пионовидная, хлопок, роза кустовая, гиперикум, тюльпан, астильба, анемон',\n    recipient: 'все',\n    photo: 'https://static.tildacdn.com/stor3435-3939-4339-b931-613535653532/278d2b32c47c5a7a16f545627544774c.jpg'\n  }\n];\n\n// Парсим параметры от AI\nlet params = {};\ntry {\n  const raw = $input.first().json.query || '{}';\n  params = JSON.parse(raw);\n} catch(e) {\n  params = {};\n}\n\nconst recipient = (params.recipient || '').toLowerCase().trim();\nconst flowers = (params.flowers || '').toLowerCase().trim();\nconst budget = parseInt(String(params.budget || '0').replace(/[\\s\\u00a0]/g, '')) || 0;\n\n// Фильтрация\nconst results = catalog.filter(item => {\n  // Бюджет\n  if (budget > 0 && item.price > budget) return false;\n\n  // Адресат (букет №6 подходит всем)\n  if (recipient && item.recipient !== 'все') {\n    if (!item.recipient.includes(recipient) && !recipient.includes(item.recipient)) return false;\n  }\n\n  // Цветы\n  if (flowers && flowers !== 'без разницы' && flowers !== 'любые' && flowers !== 'нет') {\n    const flowerList = flowers.split(/[,\\s]+/).filter(f => f.length > 2);\n    const hasFlower = flowerList.some(f => item.composition.toLowerCase().includes(f));\n    if (!hasFlower) return false;\n  }\n\n  return true;\n});\n\nif (results.length === 0) {\n  return [{ json: { result: 'Подходящих букетов не найдено. Попробуй убрать ограничение по цветам или увеличить бюджет.' } }];\n}\n\nconst formatted = results.slice(0, 3).map(item =>\n  `🌸 ${item.name} — ${item.price.toLocaleString('ru-RU')} ₽\\nСостав: ${item.composition}\\nФото: ${item.photo}`\n).join('\\n\\n');\n\nreturn [{ json: { result: formatted } }];"
+      },
+      "id": "3c",
+      "name": "Поиск букетов",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.1,
+      "position": [980, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentOutput = $input.first().json.output || '';\nconst chatId = $('Парсинг сообщения').first().json.chatId;\n\nconst orderMatch = agentOutput.match(/##ЗАКАЗ##(.+?)##/);\n\nif (orderMatch) {\n  const parts = orderMatch[1].split('|');\n  const order = {\n    hasOrder: true,\n    clientName: parts[0] || '',\n    phone: parts[1] || '',\n    product: parts[2] || '',\n    price: parts[3] || '',\n    deliveryType: parts[4] || '',\n    address: parts[5] || '',\n    date: parts[6] || '',\n    time: parts[7] || '',\n    chatId\n  };\n  const cleanText = agentOutput.replace(/##ЗАКАЗ##.+?##/, '').trim();\n  return [{ json: { ...order, responseText: cleanText } }];\n}\n\nreturn [{ json: { hasOrder: false, chatId, responseText: agentOutput } }];"
+      },
+      "id": "4",
+      "name": "Парсинг ответа агента",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasOrder }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "order"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.hasOrder }}",
+                    "rightValue": false,
+                    "operator": { "type": "boolean", "operation": "false" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "no_order"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5",
+      "name": "Switch — есть заказ?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.responseText }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "6",
+      "name": "Telegram — ответ клиенту (без заказа)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1340, 440],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.responseText }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "7",
+      "name": "Telegram — подтверждение заказа клиенту",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1340, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "1ruiJaRNv24DGgELZcd1LKkEqe1Otrj85RvQ2zxzQgE8", "__rl": true, "mode": "id" },
+        "sheetName": { "value": "Orders", "__rl": true, "mode": "title" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_date": "={{ new Date().toLocaleDateString('ru-RU') }}",
+            "chat_id": "={{ $json.chatId }}",
+            "Name": "={{ $json.clientName }}",
+            "Phone": "={{ $json.phone }}",
+            "products": "={{ $json.product }}",
+            "price": "={{ $json.price }}",
+            "delivery_type": "={{ $json.deliveryType }}",
+            "delivery_address": "={{ $json.address }}",
+            "delivery_date": "={{ $json.date }}",
+            "delivery_time": "={{ $json.time }}",
+            "status": "Новый"
+          }
+        },
+        "options": {}
+      },
+      "id": "8",
+      "name": "Записать заказ в Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1560, 160],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "50052430",
+        "text": "=🛍 *Новый заказ через бота*\n\n👤 *Клиент:* {{ $json.clientName }}\n📞 *Телефон:* {{ $json.phone }}\n\n📦 *Товар:* {{ $json.product }}\n💰 *Сумма:* {{ $json.price }} ₽\n\n🚗 *Доставка:* {{ $json.deliveryType }}\n📍 *Адрес:* {{ $json.address || 'самовывоз' }}\n📅 *Дата:* {{ $json.date }}\n⏰ *Время:* {{ $json.time }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "9",
+      "name": "Telegram — уведомить менеджера",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1780, 160],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CRED_ID",
+          "name": "Telegram Pestro Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[{ "node": "Парсинг сообщения", "type": "main", "index": 0 }]]
+    },
+    "Парсинг сообщения": {
+      "main": [[{ "node": "Switch — голос или текст?", "type": "main", "index": 0 }]]
+    },
+    "Switch — голос или текст?": {
+      "main": [
+        [{ "node": "Telegram — получить ссылку на файл", "type": "main", "index": 0 }],
+        [{ "node": "AI Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram — получить ссылку на файл": {
+      "main": [[{ "node": "Скачать голосовой файл", "type": "main", "index": 0 }]]
+    },
+    "Скачать голосовой файл": {
+      "main": [[{ "node": "Groq — транскрибация", "type": "main", "index": 0 }]]
+    },
+    "Groq — транскрибация": {
+      "main": [[{ "node": "Подставить транскрипцию", "type": "main", "index": 0 }]]
+    },
+    "Подставить транскрипцию": {
+      "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]]
+    },
+    "AI Agent": {
+      "main": [[{ "node": "Парсинг ответа агента", "type": "main", "index": 0 }]]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "Поиск букетов": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Парсинг ответа агента": {
+      "main": [[{ "node": "Switch — есть заказ?", "type": "main", "index": 0 }]]
+    },
+    "Switch — есть заказ?": {
+      "main": [
+        [{ "node": "Telegram — подтверждение заказа клиенту", "type": "main", "index": 0 }],
+        [{ "node": "Telegram — ответ клиенту (без заказа)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram — подтверждение заказа клиенту": {
+      "main": [[{ "node": "Записать заказ в Sheets", "type": "main", "index": 0 }]]
+    },
+    "Записать заказ в Sheets": {
+      "main": [[{ "node": "Telegram — уведомить менеджера", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
