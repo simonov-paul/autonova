@@ -1,5 +1,6 @@
 .business/
-website/
+website/node_modules/
+website/.next/
 .DS_Store
 node_modules/
 .claude/skills/bulletproof/
