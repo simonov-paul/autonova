@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "postinstall": "mkdir -p node_modules/pg-587764f78a6c7a9c && echo '{\"name\":\"pg-587764f78a6c7a9c\",\"version\":\"1.0.0\",\"main\":\"../pg/lib/index.js\",\"exports\":{\".\":{\"require\":\"../pg/lib/index.js\",\"import\":\"../pg/esm/index.mjs\"}}}' > node_modules/pg-587764f78a6c7a9c/package.json"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.4",

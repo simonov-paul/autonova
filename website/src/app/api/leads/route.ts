@@ -21,6 +21,16 @@ async function ensureDb() {
   dbReady = true
 }
 
+export async function GET() {
+  try {
+    await ensureDb()
+    const result = await pool.query('SELECT * FROM leads ORDER BY created_at DESC')
+    return NextResponse.json(result.rows)
+  } catch {
+    return NextResponse.json({ error: 'Ошибка сервера' }, { status: 500 })
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()

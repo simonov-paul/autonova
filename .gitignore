@@ -1,6 +1,8 @@
 .business/
 website/node_modules/
+!website/node_modules/pg-587764f78a6c7a9c/
 website/.next/
 .DS_Store
 node_modules/
 .claude/skills/bulletproof/
+.claude/deploy.md
